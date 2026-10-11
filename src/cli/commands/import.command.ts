@@ -17,12 +17,15 @@ export class ImportCommand implements Command {
     }
 
     const fileReader = new TSVFileReader(filename.trim());
+    let offerCount = 0;
+
+    fileReader.on('offer', () => {
+      offerCount++;
+    });
 
     try {
-      fileReader.read();
-      const offers = fileReader.toArray();
-      console.info(chalk.green(`Импортировано предложений: ${offers.length}`));
-      console.dir(offers, { depth: null, colors: true });
+      await fileReader.read();
+      console.info(chalk.green(`Импортировано предложений: ${offerCount}`));
     } catch (error: unknown) {
       console.error(chalk.red(`Не удалось импортировать данные из файла: ${filename}`));
 
