@@ -1,28 +1,16 @@
-import { readFileSync } from 'node:fs';
+import { createReadStream } from 'node:fs';
+import { EventEmitter } from 'node:events';
 import { FileReader } from './file-reader.interface.js';
 import { Amenity, City, HousingType, Offer, UserType } from '../../types/index.js';
 
 const OFFER_FIELDS_COUNT = 19;
+const CHUNK_SIZE = 16 * 1024;
 
-export class TSVFileReader implements FileReader {
-  private rawData = '';
-
+export class TSVFileReader extends EventEmitter implements FileReader {
   constructor(
     private readonly filename: string
-  ) {}
-
-  private validateRawData(): void {
-    if (! this.rawData) {
-      throw new Error('File was not read');
-    }
-  }
-
-  private parseRawDataToOffers(): Offer[] {
-    return this.rawData
-      .split(/\r?\n/)
-      .map((line, index) => ({ line, lineNumber: index + 1 }))
-      .filter(({ line }) => line.trim().length > 0)
-      .map(({ line, lineNumber }) => this.parseLineToOffer(line, lineNumber));
+  ) {
+    super();
   }
 
   private parseLineToOffer(line: string, lineNumber: number): Offer {
@@ -81,7 +69,7 @@ export class TSVFileReader implements FileReader {
   }
 
   private parseList(value: string): string[] {
-    return value.split(';').map((item) => item.trim());
+    return value.split(';').map((item) => item.trim()).filter((item) => item.length > 0);
   }
 
   private parseBoolean(value: string): boolean {
@@ -93,12 +81,38 @@ export class TSVFileReader implements FileReader {
     return { latitude, longitude };
   }
 
-  public read(): void {
-    this.rawData = readFileSync(this.filename, { encoding: 'utf-8' });
+  private emitLine(line: string, lineNumber: number): void {
+    const trimmedLine = line.replace(/\r$/, '');
+
+    if (trimmedLine.trim().length === 0) {
+      return;
+    }
+
+    this.emit('offer', this.parseLineToOffer(trimmedLine, lineNumber));
   }
 
-  public toArray(): Offer[] {
-    this.validateRawData();
-    return this.parseRawDataToOffers();
+  public async read(): Promise<void> {
+    const readStream = createReadStream(this.filename, {
+      encoding: 'utf-8',
+      highWaterMark: CHUNK_SIZE,
+    });
+
+    let remainder = '';
+    let lineNumber = 0;
+
+    for await (const chunk of readStream) {
+      const lines = `${remainder}${String(chunk)}`.split('\n');
+      remainder = lines.pop() ?? '';
+
+      for (const line of lines) {
+        lineNumber++;
+        this.emitLine(line, lineNumber);
+      }
+    }
+
+    if (remainder.length > 0) {
+      lineNumber++;
+      this.emitLine(remainder, lineNumber);
+    }
   }
 }

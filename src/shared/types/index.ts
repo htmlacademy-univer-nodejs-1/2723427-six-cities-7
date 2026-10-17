@@ -6,3 +6,5 @@ export type { Location } from './location.type.js';
 export type { User } from './user.type.js';
 export type { Offer } from './offer.type.js';
 export type { Comment } from './comment.type.js';
+export type { MockCity, MockServerData } from './mock-server-data.type.js';
+export { Component } from './component.enum.js';
