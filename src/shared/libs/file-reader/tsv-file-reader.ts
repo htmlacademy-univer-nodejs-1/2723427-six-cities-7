@@ -81,14 +81,18 @@ export class TSVFileReader extends EventEmitter implements FileReader {
     return { latitude, longitude };
   }
 
-  private emitLine(line: string, lineNumber: number): void {
+  private async emitLine(line: string, lineNumber: number): Promise<void> {
     const trimmedLine = line.replace(/\r$/, '');
 
     if (trimmedLine.trim().length === 0) {
       return;
     }
 
-    this.emit('offer', this.parseLineToOffer(trimmedLine, lineNumber));
+    const offer = this.parseLineToOffer(trimmedLine, lineNumber);
+
+    await new Promise<void>((resolve, reject) => {
+      this.emit('offer', offer, resolve, reject);
+    });
   }
 
   public async read(): Promise<void> {
@@ -106,13 +110,14 @@ export class TSVFileReader extends EventEmitter implements FileReader {
 
       for (const line of lines) {
         lineNumber++;
-        this.emitLine(line, lineNumber);
+        await this.emitLine(line, lineNumber);
       }
     }
 
     if (remainder.length > 0) {
       lineNumber++;
-      this.emitLine(remainder, lineNumber);
+      await this.emitLine(remainder, lineNumber);
     }
+
   }
 }

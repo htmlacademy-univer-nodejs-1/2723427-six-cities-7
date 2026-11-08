@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { Command } from './command.interface.js';
-import { AxiosHTTPClient, HTTPClient } from '../../shared/libs/http-client/index.js';
+import { FetchHTTPClient, HTTPClient } from '../../shared/libs/http-client/index.js';
 import { TSVOfferGenerator } from '../../shared/libs/offer-generator/index.js';
 import { TSVFileWriter } from '../../shared/libs/file-writer/index.js';
 import { MockServerData } from '../../shared/types/index.js';
@@ -28,7 +28,7 @@ function isMockServerData(value: unknown): value is MockServerData {
 
 export class GenerateCommand implements Command {
   constructor(
-    private readonly httpClient: HTTPClient = new AxiosHTTPClient()
+    private readonly httpClient: HTTPClient = new FetchHTTPClient()
   ) {}
 
   public getName(): string {

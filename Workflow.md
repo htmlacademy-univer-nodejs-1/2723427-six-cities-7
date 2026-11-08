@@ -95,6 +95,10 @@ npm run cli -- --generate 10 ./mocks/offers.tsv http://localhost:3123/db
 ```
 PORT=4000 — порт, на котором приложение ожидает подключений
 DB_HOST=127.0.0.1 — IP-адрес сервера базы данных
+DB_PORT=27017 — порт сервера базы данных
+DB_USER=admin — имя пользователя базы данных
+DB_PASSWORD=test — пароль пользователя базы данных
+DB_NAME=six-cities — имя базы данных
 SALT=secret — соль для хеширования паролей
 ```
 
