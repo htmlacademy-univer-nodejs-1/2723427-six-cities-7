@@ -4,14 +4,15 @@ import { StatusCodes } from 'http-status-codes';
 import { Logger } from '../../shared/libs/logger/index.js';
 import { Config, RestSchema } from '../../shared/libs/config/index.js';
 import { City, Component } from '../../shared/types/index.js';
-import { CreateOfferDto, OfferService, UpdateOfferDto } from '../../shared/modules/offer/index.js';
+import { CreateOfferRequestDto, OfferService, UpdateOfferDto } from '../../shared/modules/offer/index.js';
+import { UserService } from '../../shared/modules/user/index.js';
 import { HttpError } from '../errors/http-error.js';
-import { fillDTO } from '../helpers/fill-dto.js';
 import {
-  getReferenceId,
   toDetailedOfferResponse,
   toOfferListItemResponse,
 } from '../helpers/response.mapper.js';
+import { ValidateDtoMiddleware } from '../middleware/validate-dto.middleware.js';
+import { ValidateObjectIdMiddleware } from '../middleware/validate-object-id.middleware.js';
 import { HttpMethod } from '../types/http-method.enum.js';
 import { Controller } from './controller.js';
 
@@ -21,18 +22,26 @@ export class OfferController extends Controller {
     @inject(Component.Logger) logger: Logger,
     @inject(Component.Config) config: Config<RestSchema>,
     @inject(Component.OfferService) private readonly offerService: OfferService,
+    @inject(Component.UserService) private readonly userService: UserService,
   ) {
     super(logger, config);
 
-    this.addRoute({ path: '/offers', method: HttpMethod.Get, handler: this.find });
-    this.addRoute({ path: '/offers', method: HttpMethod.Post, handler: this.create });
-    this.addRoute({ path: '/offers/:offerId', method: HttpMethod.Get, handler: this.findById });
-    this.addRoute({ path: '/offers/:offerId', method: HttpMethod.Put, handler: this.update });
-    this.addRoute({ path: '/offers/:offerId', method: HttpMethod.Delete, handler: this.delete });
-    this.addRoute({ path: '/cities/:city/premium', method: HttpMethod.Get, handler: this.findPremiumByCity });
+    const offerId = new ValidateObjectIdMiddleware('offerId');
+    this.addRoute({ path: '/offers', method: HttpMethod.Get, handler: this.index });
+    this.addRoute({
+      path: '/offers', method: HttpMethod.Post, handler: this.create,
+      middleware: [new ValidateDtoMiddleware(CreateOfferRequestDto)],
+    });
+    this.addRoute({ path: '/offers/:offerId', method: HttpMethod.Get, handler: this.show, middleware: [offerId] });
+    this.addRoute({
+      path: '/offers/:offerId', method: HttpMethod.Put, handler: this.update,
+      middleware: [offerId, new ValidateDtoMiddleware(UpdateOfferDto, true)],
+    });
+    this.addRoute({ path: '/offers/:offerId', method: HttpMethod.Delete, handler: this.delete, middleware: [offerId] });
+    this.addRoute({ path: '/cities/:city/premium', method: HttpMethod.Get, handler: this.indexPremium });
   }
 
-  public async find(req: Request, res: Response): Promise<void> {
+  public async index(req: Request, res: Response): Promise<void> {
     const limit = this.parseLimit(req.query.limit);
     const userId = this.getUserId(req) ?? undefined;
     const offers = await this.offerService.find(limit, userId);
@@ -41,17 +50,19 @@ export class OfferController extends Controller {
   }
 
   public async create(
-    req: Request<Record<string, string>, Record<string, unknown>, CreateOfferDto>,
+    { body }: Request<Record<string, string>, Record<string, unknown>, CreateOfferRequestDto>,
     res: Response,
   ): Promise<void> {
-    const userId = this.requireUserId(req);
-    const dto = fillDTO(CreateOfferDto, req.body);
-    const offer = await this.offerService.create(dto, userId);
+    if (!await this.userService.findById(body.authorId)) {
+      throw new HttpError(StatusCodes.NOT_FOUND, `User with id «${body.authorId}» not found`);
+    }
+
+    const offer = await this.offerService.create(body, body.authorId);
 
     this.created(res, toDetailedOfferResponse(offer));
   }
 
-  public async findById(req: Request, res: Response): Promise<void> {
+  public async show(req: Request, res: Response): Promise<void> {
     const userId = this.getUserId(req) ?? undefined;
     const offer = await this.offerService.findById(req.params.offerId, userId);
 
@@ -66,20 +77,8 @@ export class OfferController extends Controller {
     req: Request<Record<string, string>, Record<string, unknown>, UpdateOfferDto>,
     res: Response,
   ): Promise<void> {
-    const userId = this.requireUserId(req);
     const { params, body } = req;
-    const dto = fillDTO(UpdateOfferDto, body);
-    const offer = await this.offerService.findById(params.offerId);
-
-    if (!offer) {
-      throw new HttpError(StatusCodes.NOT_FOUND, `Offer with id «${params.offerId}» not found`);
-    }
-
-    if (getReferenceId(offer.authorId) !== userId) {
-      throw new HttpError(StatusCodes.FORBIDDEN, 'You can update only your own offers');
-    }
-
-    const updatedOffer = await this.offerService.updateById(params.offerId, dto, userId);
+    const updatedOffer = await this.offerService.updateById(params.offerId, body, this.getUserId(req) ?? undefined);
 
     if (!updatedOffer) {
       throw new HttpError(StatusCodes.NOT_FOUND, `Offer with id «${params.offerId}» not found`);
@@ -89,22 +88,16 @@ export class OfferController extends Controller {
   }
 
   public async delete(req: Request, res: Response): Promise<void> {
-    const userId = this.requireUserId(req);
-    const offer = await this.offerService.findById(req.params.offerId);
+    const offer = await this.offerService.deleteById(req.params.offerId);
 
     if (!offer) {
       throw new HttpError(StatusCodes.NOT_FOUND, `Offer with id «${req.params.offerId}» not found`);
     }
 
-    if (getReferenceId(offer.authorId) !== userId) {
-      throw new HttpError(StatusCodes.FORBIDDEN, 'You can delete only your own offers');
-    }
-
-    await this.offerService.deleteById(req.params.offerId);
     this.noContent(res);
   }
 
-  public async findPremiumByCity(req: Request, res: Response): Promise<void> {
+  public async indexPremium(req: Request, res: Response): Promise<void> {
     const city = req.params.city as City;
 
     if (!Object.values(City).includes(city)) {
@@ -122,12 +115,10 @@ export class OfferController extends Controller {
       return undefined;
     }
 
-    const limit = Number(value);
-
-    if (!Number.isInteger(limit) || limit < 0) {
-      throw new HttpError(StatusCodes.BAD_REQUEST, 'Limit must be a non-negative integer');
+    if (typeof value !== 'string' || !/^\d+$/.test(value) || Number(value) > 2147483647) {
+      throw new HttpError(StatusCodes.BAD_REQUEST, 'Limit must be an integer between 0 and 2147483647');
     }
 
-    return limit;
+    return Number(value);
   }
 }

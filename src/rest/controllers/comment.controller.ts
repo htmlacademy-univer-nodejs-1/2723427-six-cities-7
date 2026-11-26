@@ -6,9 +6,11 @@ import { Config, RestSchema } from '../../shared/libs/config/index.js';
 import { Component } from '../../shared/types/index.js';
 import { CommentService, CreateCommentDto } from '../../shared/modules/comment/index.js';
 import { OfferService } from '../../shared/modules/offer/index.js';
+import { UserService } from '../../shared/modules/user/index.js';
 import { HttpError } from '../errors/http-error.js';
-import { fillDTO } from '../helpers/fill-dto.js';
 import { toCommentResponse } from '../helpers/response.mapper.js';
+import { ValidateDtoMiddleware } from '../middleware/validate-dto.middleware.js';
+import { ValidateObjectIdMiddleware } from '../middleware/validate-object-id.middleware.js';
 import { HttpMethod } from '../types/http-method.enum.js';
 import { Controller } from './controller.js';
 
@@ -19,14 +21,21 @@ export class CommentController extends Controller {
     @inject(Component.Config) config: Config<RestSchema>,
     @inject(Component.CommentService) private readonly commentService: CommentService,
     @inject(Component.OfferService) private readonly offerService: OfferService,
+    @inject(Component.UserService) private readonly userService: UserService,
   ) {
     super(logger, config);
 
-    this.addRoute({ path: '/offers/:offerId/comments', method: HttpMethod.Get, handler: this.find });
-    this.addRoute({ path: '/offers/:offerId/comments', method: HttpMethod.Post, handler: this.create });
+    const offerId = new ValidateObjectIdMiddleware('offerId');
+    this.addRoute({
+      path: '/offers/:offerId/comments', method: HttpMethod.Get, handler: this.index, middleware: [offerId],
+    });
+    this.addRoute({
+      path: '/offers/:offerId/comments', method: HttpMethod.Post, handler: this.create,
+      middleware: [offerId, new ValidateDtoMiddleware(CreateCommentDto)],
+    });
   }
 
-  public async find(req: Request, res: Response): Promise<void> {
+  public async index(req: Request, res: Response): Promise<void> {
     await this.checkOfferExists(req.params.offerId);
     const comments = await this.commentService.findByOfferId(req.params.offerId);
 
@@ -34,18 +43,23 @@ export class CommentController extends Controller {
   }
 
   public async create(
-    req: Request<Record<string, string>, Record<string, unknown>, CreateCommentDto>,
+    req: Request<Record<string, string>, Record<string, unknown>, Omit<CreateCommentDto, 'offerId'>>,
     res: Response,
   ): Promise<void> {
-    const userId = this.requireUserId(req);
+    const { text, rating, authorId } = req.body;
     await this.checkOfferExists(req.params.offerId);
-    const dto = fillDTO(CreateCommentDto, req.body);
+
+    if (!await this.userService.findById(authorId)) {
+      throw new HttpError(StatusCodes.NOT_FOUND, `User with id «${authorId}» not found`);
+    }
 
     const comment = await this.commentService.create({
-      ...dto,
-      offerId: req.params.offerId,
-      authorId: userId,
+      text, rating, authorId, offerId: req.params.offerId,
     });
+
+    if (!comment) {
+      throw new HttpError(StatusCodes.NOT_FOUND, `Offer with id «${req.params.offerId}» not found`);
+    }
 
     this.created(res, toCommentResponse(comment));
   }

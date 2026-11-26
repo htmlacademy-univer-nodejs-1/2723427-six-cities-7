@@ -2,15 +2,15 @@ import { DocumentType } from '@typegoose/typegoose';
 import { CommentEntity } from '../../shared/modules/comment/index.js';
 import { OfferEntity } from '../../shared/modules/offer/index.js';
 import { UserEntity } from '../../shared/modules/user/index.js';
+import { CITY_COORDINATES } from '../../shared/types/city-coordinates.js';
 import {
   CommentResponse,
   DetailedOfferResponse,
   OfferListItemResponse,
   UserResponse,
 } from '../responses/index.js';
+import { DEFAULT_AVATAR_URL } from './avatar.js';
 import { fillDTO } from './fill-dto.js';
-
-const DEFAULT_AVATAR_URL = '/img/avatar.svg';
 
 type UserSource = Partial<DocumentType<UserEntity>> | null | undefined;
 
@@ -53,10 +53,7 @@ function toOfferListItemPlain(offer: DocumentType<OfferEntity>) {
     publishDate: offer.postDate,
     city: {
       name: offer.city,
-      coordinates: {
-        latitude: offer.location.latitude,
-        longitude: offer.location.longitude,
-      },
+      coordinates: CITY_COORDINATES[offer.city],
     },
     preview: offer.previewImage,
     isPremium: offer.isPremium,

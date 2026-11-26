@@ -6,6 +6,7 @@ import { Config, RestSchema } from '../shared/libs/config/index.js';
 import { DatabaseClient } from '../shared/libs/database-client/index.js';
 import { getMongoURI } from '../shared/helpers/database.js';
 import { Component } from '../shared/types/index.js';
+import { AVATAR_DIRECTORY, AVATAR_URL_PATH, DEFAULT_AVATAR_FILE, DEFAULT_AVATAR_URL } from './helpers/avatar.js';
 import { ControllerInterface } from './types/controller.interface.js';
 import { ExceptionFilter } from './exception-filters/index.js';
 
@@ -41,6 +42,8 @@ export class RestApplication {
 
   public registerMiddleware(): void {
     this.expressApp.use(express.json());
+    this.expressApp.use(AVATAR_URL_PATH, express.static(AVATAR_DIRECTORY, { index: false }));
+    this.expressApp.get(DEFAULT_AVATAR_URL, (_req, res) => res.sendFile(DEFAULT_AVATAR_FILE));
   }
 
   public registerRoutes(): void {

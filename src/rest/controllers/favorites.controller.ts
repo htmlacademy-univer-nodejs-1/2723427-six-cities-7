@@ -8,6 +8,7 @@ import { OfferService } from '../../shared/modules/offer/index.js';
 import { UserService } from '../../shared/modules/user/index.js';
 import { HttpError } from '../errors/http-error.js';
 import { toOfferListItemResponse } from '../helpers/response.mapper.js';
+import { ValidateObjectIdMiddleware } from '../middleware/validate-object-id.middleware.js';
 import { HttpMethod } from '../types/http-method.enum.js';
 import { Controller } from './controller.js';
 
@@ -21,49 +22,57 @@ export class FavoritesController extends Controller {
   ) {
     super(logger, config);
 
-    this.addRoute({ path: '/favorites', method: HttpMethod.Get, handler: this.find });
-    this.addRoute({ path: '/offers/:offerId/favorites', method: HttpMethod.Post, handler: this.add });
-    this.addRoute({ path: '/offers/:offerId/favorites', method: HttpMethod.Delete, handler: this.remove });
+    const userId = new ValidateObjectIdMiddleware('userId', 'query');
+    const offerId = new ValidateObjectIdMiddleware('offerId');
+    this.addRoute({ path: '/favorites', method: HttpMethod.Get, handler: this.index, middleware: [userId] });
+    this.addRoute({
+      path: '/offers/:offerId/favorites', method: HttpMethod.Post, handler: this.create,
+      middleware: [offerId, userId],
+    });
+    this.addRoute({
+      path: '/offers/:offerId/favorites', method: HttpMethod.Delete, handler: this.delete,
+      middleware: [offerId, userId],
+    });
   }
 
-  public async find(req: Request, res: Response): Promise<void> {
-    const userId = this.requireUserId(req);
+  public async index(req: Request, res: Response): Promise<void> {
+    const userId = req.query.userId as string;
     const offers = await this.userService.findFavoriteOffers(userId);
 
     if (!offers) {
-      throw new HttpError(StatusCodes.UNAUTHORIZED, 'Unauthorized');
+      throw new HttpError(StatusCodes.NOT_FOUND, `User with id «${userId}» not found`);
     }
 
     this.ok(res, offers.map(toOfferListItemResponse));
   }
 
-  public async add(req: Request, res: Response): Promise<void> {
-    const userId = this.requireUserId(req);
-    const offer = await this.offerService.findById(req.params.offerId);
+  public async create(req: Request, res: Response): Promise<void> {
+    const userId = req.query.userId as string;
+    const favoriteOffer = await this.offerService.addFavorite(req.params.offerId, userId);
 
-    if (!offer) {
+    if (favoriteOffer === 'offer-not-found') {
       throw new HttpError(StatusCodes.NOT_FOUND, `Offer with id «${req.params.offerId}» not found`);
     }
 
-    await this.userService.addFavoriteOffer(userId, req.params.offerId);
-    const favoriteOffer = await this.offerService.findById(req.params.offerId, userId);
-
-    if (!favoriteOffer) {
-      throw new HttpError(StatusCodes.NOT_FOUND, `Offer with id «${req.params.offerId}» not found`);
+    if (favoriteOffer === 'user-not-found') {
+      throw new HttpError(StatusCodes.NOT_FOUND, `User with id «${userId}» not found`);
     }
 
     this.created(res, toOfferListItemResponse(favoriteOffer));
   }
 
-  public async remove(req: Request, res: Response): Promise<void> {
-    const userId = this.requireUserId(req);
+  public async delete(req: Request, res: Response): Promise<void> {
+    const userId = req.query.userId as string;
     const offer = await this.offerService.findById(req.params.offerId);
 
     if (!offer) {
       throw new HttpError(StatusCodes.NOT_FOUND, `Offer with id «${req.params.offerId}» not found`);
     }
 
-    await this.userService.removeFavoriteOffer(userId, req.params.offerId);
+    if (!await this.userService.removeFavoriteOffer(userId, req.params.offerId)) {
+      throw new HttpError(StatusCodes.NOT_FOUND, `User with id «${userId}» not found`);
+    }
+
     this.noContent(res);
   }
 }

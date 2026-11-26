@@ -7,13 +7,15 @@ import { Component } from '../../shared/types/index.js';
 import { CreateUserDto, LoginUserDto, UserService } from '../../shared/modules/user/index.js';
 import { HttpError } from '../errors/http-error.js';
 import { createAccessToken } from '../helpers/auth.js';
+import { storeAvatar, validateAvatar } from '../helpers/avatar.js';
 import { fillDTO } from '../helpers/fill-dto.js';
 import { toUserResponse } from '../helpers/response.mapper.js';
+import { UploadAvatarMiddleware } from '../middleware/upload-avatar.middleware.js';
+import { ValidateDtoMiddleware } from '../middleware/validate-dto.middleware.js';
+import { ValidateObjectIdMiddleware } from '../middleware/validate-object-id.middleware.js';
 import { LoggedUserResponse } from '../responses/index.js';
 import { HttpMethod } from '../types/http-method.enum.js';
 import { Controller } from './controller.js';
-
-const DEFAULT_AVATAR_URL = '/img/avatar.svg';
 
 @injectable()
 export class UserController extends Controller {
@@ -24,25 +26,33 @@ export class UserController extends Controller {
   ) {
     super(logger, config);
 
-    this.addRoute({ path: '/users/register', method: HttpMethod.Post, handler: this.register });
-    this.addRoute({ path: '/users/login', method: HttpMethod.Post, handler: this.login });
+    this.addRoute({
+      path: '/users/register', method: HttpMethod.Post, handler: this.create,
+      middleware: [new ValidateDtoMiddleware(CreateUserDto)],
+    });
+    this.addRoute({
+      path: '/users/login', method: HttpMethod.Post, handler: this.login,
+      middleware: [new ValidateDtoMiddleware(LoginUserDto)],
+    });
     this.addRoute({ path: '/users/login', method: HttpMethod.Get, handler: this.checkLoginStatus });
     this.addRoute({ path: '/users/logout', method: HttpMethod.Post, handler: this.logout });
-    this.addRoute({ path: '/users/avatar', method: HttpMethod.Post, handler: this.uploadAvatar });
+    this.addRoute({
+      path: '/users/avatar', method: HttpMethod.Post, handler: this.uploadAvatar,
+      middleware: [new UploadAvatarMiddleware(), new ValidateObjectIdMiddleware('userId', 'body')],
+    });
   }
 
-  public async register(
+  public async create(
     { body }: Request<Record<string, string>, Record<string, unknown>, CreateUserDto>,
     res: Response,
   ): Promise<void> {
-    const dto = fillDTO(CreateUserDto, body);
-    const existedUser = await this.userService.findByEmail(dto.email);
+    const existedUser = await this.userService.findByEmail(body.email);
 
     if (existedUser) {
-      throw new HttpError(StatusCodes.CONFLICT, `User with email «${dto.email}» already exists`);
+      throw new HttpError(StatusCodes.CONFLICT, `User with email «${body.email}» already exists`);
     }
 
-    const user = await this.userService.create(dto, this.config.get('SALT'));
+    const user = await this.userService.create(body, this.config.get('SALT'));
 
     this.created(res, toUserResponse(user));
   }
@@ -51,8 +61,7 @@ export class UserController extends Controller {
     { body }: Request<Record<string, string>, Record<string, unknown>, LoginUserDto>,
     res: Response,
   ): Promise<void> {
-    const dto = fillDTO(LoginUserDto, body);
-    const user = await this.userService.verifyUser(dto, this.config.get('SALT'));
+    const user = await this.userService.verifyUser(body, this.config.get('SALT'));
 
     if (!user) {
       throw new HttpError(StatusCodes.UNAUTHORIZED, 'Invalid email or password');
@@ -77,23 +86,23 @@ export class UserController extends Controller {
     this.ok(res, toUserResponse(user));
   }
 
-  public async logout(req: Request, res: Response): Promise<void> {
-    this.requireUserId(req);
+  public async logout(_req: Request, res: Response): Promise<void> {
     this.noContent(res);
   }
 
   public async uploadAvatar(req: Request, res: Response): Promise<void> {
-    const userId = this.requireUserId(req);
-    const user = await this.userService.findById(userId);
+    const userId: string = req.body.userId;
+    const { image, extension } = await validateAvatar(req.file);
 
-    if (!user) {
-      throw new HttpError(StatusCodes.UNAUTHORIZED, 'Unauthorized');
+    if (!await this.userService.findById(userId)) {
+      throw new HttpError(StatusCodes.NOT_FOUND, `User with id «${userId}» not found`);
     }
 
-    const avatarFromBody = (req.body as { avatar?: unknown } | undefined)?.avatar;
-    const avatarUrl = typeof avatarFromBody === 'string'
-      ? avatarFromBody
-      : user.avatarPath || DEFAULT_AVATAR_URL;
+    const avatarUrl = await storeAvatar(userId, image, extension);
+
+    if (!await this.userService.updateAvatar(userId, avatarUrl)) {
+      throw new HttpError(StatusCodes.NOT_FOUND, `User with id «${userId}» not found`);
+    }
 
     this.ok(res, { avatarUrl });
   }

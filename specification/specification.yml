@@ -5,6 +5,9 @@ info:
   description: |
     REST API сервиса «Шесть городов» для путешественников,
     не желающих переплачивать за аренду жилья.
+    На этом этапе операции с предложениями, комментариями, избранным и аватаром
+    доступны без токена. Переданный идентификатор пользователя выбирает запись,
+    но не подтверждает личность клиента.
   version: 1.0.0
   license:
     name: MIT
@@ -37,7 +40,6 @@ paths:
       summary: Создание нового пользователя
       description: |
         Создаёт нового пользователя в системе.
-        Ресурс доступен только анонимным клиентам.
         Email создаваемого пользователя уникален.
         Конфиденциальные данные (пароль) в ответе не возвращаются.
       security: []
@@ -76,8 +78,7 @@ paths:
       description: |
         Выполняет аутентификацию пользователя по email и паролю.
         В случае успешной проверки возвращает токен и информацию о пользователе.
-        Токен используется для доступа к закрытой части приложения
-        и передаётся в заголовке Authorization: Bearer &lt;token&gt;.
+        Токен передаётся в заголовке Authorization для проверки состояния пользователя.
       security: []
       requestBody:
         required: true
@@ -92,6 +93,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/LoggedUser'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           description: Неверные логин или пароль
           content:
@@ -132,19 +135,11 @@ paths:
       operationId: logoutUser
       summary: Выход из закрытой части приложения
       description: |
-        Завершает пользовательский сеанс.
-        Ресурс доступен только авторизованным клиентам.
-      security:
-        - bearerAuth: []
+        Клиент завершает сеанс, удаляя полученный токен у себя.
+      security: []
       responses:
         '204':
           description: Сеанс завершён
-        '401':
-          description: Клиент не авторизован
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HttpProblem'
 
   /users/avatar:
     post:
@@ -155,16 +150,21 @@ paths:
       description: |
         Загружает изображение аватара пользователя.
         Допустимые форматы: .jpg и .png.
-        Ресурс доступен только авторизованным клиентам.
-      security:
-        - bearerAuth: []
+        Максимальный размер файла — 5 МиБ.
+        Размер изображения не должен превышать 16 777 216 пикселей.
+      security: []
       requestBody:
         required: true
         content:
           multipart/form-data:
             schema:
               type: object
+              required:
+                - userId
+                - avatar
               properties:
+                userId:
+                  $ref: '#/components/schemas/ObjectId'
                 avatar:
                   type: string
                   format: binary
@@ -179,7 +179,7 @@ paths:
                 properties:
                   avatarUrl:
                     type: string
-                    format: uri
+                    format: uri-reference
                     description: Ссылка на загруженное изображение
         '400':
           description: Некорректный файл или не распознан формат изображения
@@ -187,8 +187,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HttpProblem'
-        '401':
-          description: Клиент не авторизован
+        '404':
+          description: Пользователь не найден
           content:
             application/json:
               schema:
@@ -216,6 +216,7 @@ paths:
             type: integer
             default: 60
             minimum: 0
+            maximum: 2147483647
       responses:
         '200':
           description: Список предложений
@@ -238,9 +239,8 @@ paths:
       summary: Создание нового предложения
       description: |
         Создаёт новое предложение по аренде.
-        Ресурс доступен только авторизованным клиентам.
-      security:
-        - bearerAuth: []
+        Автор задаётся полем authorId.
+      security: []
       requestBody:
         required: true
         content:
@@ -260,8 +260,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HttpProblem'
-        '401':
-          description: Клиент не авторизован
+        '404':
+          description: Автор не найден
           content:
             application/json:
               schema:
@@ -290,6 +290,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DetailedOffer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           description: Предложение не найдено
           content:
@@ -302,11 +304,8 @@ paths:
       operationId: updateOffer
       summary: Редактирование предложения
       description: |
-        Обновляет предложение по аренде. Клиент может редактировать
-        только предложения, созданные им.
-        Ресурс доступен только авторизованным клиентам.
-      security:
-        - bearerAuth: []
+        Обновляет предложение по аренде.
+      security: []
       parameters:
         - $ref: '#/components/parameters/OfferId'
       requestBody:
@@ -328,18 +327,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HttpProblem'
-        '401':
-          description: Клиент не авторизован
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HttpProblem'
-        '403':
-          description: Попытка отредактировать чужое предложение
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HttpProblem'
         '404':
           description: Предложение не найдено
           content:
@@ -352,28 +339,15 @@ paths:
       operationId: deleteOffer
       summary: Удаление предложения
       description: |
-        Удаляет предложение по аренде. Клиент может удалять только
-        свои предложения. Комментарии к предложению удаляются автоматически.
-        Ресурс доступен только авторизованным клиентам.
-      security:
-        - bearerAuth: []
+        Удаляет предложение по аренде. Комментарии удаляются автоматически.
+      security: []
       parameters:
         - $ref: '#/components/parameters/OfferId'
       responses:
         '204':
           description: Предложение удалено
-        '401':
-          description: Клиент не авторизован
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HttpProblem'
-        '403':
-          description: Попытка удалить чужое предложение
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HttpProblem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           description: Предложение не найдено
           content:
@@ -439,6 +413,8 @@ paths:
                 maxItems: 50
                 items:
                   $ref: '#/components/schemas/Comment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           description: Предложение не найдено
           content:
@@ -452,9 +428,8 @@ paths:
       summary: Добавление комментария для предложения
       description: |
         Добавляет комментарий к предложению по аренде.
-        Ресурс доступен только авторизованным клиентам.
-      security:
-        - bearerAuth: []
+        Автор задаётся полем authorId.
+      security: []
       parameters:
         - $ref: '#/components/parameters/OfferId'
       requestBody:
@@ -476,14 +451,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HttpProblem'
-        '401':
-          description: Клиент не авторизован
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HttpProblem'
         '404':
-          description: Предложение не найдено
+          description: Предложение или автор не найдены
           content:
             application/json:
               schema:
@@ -496,11 +465,10 @@ paths:
       operationId: getFavorites
       summary: Получение списка избранных предложений
       description: |
-        Возвращает все предложения, добавленные текущим пользователем
-        в список избранных.
-        Ресурс доступен только авторизованным клиентам.
-      security:
-        - bearerAuth: []
+        Возвращает избранные предложения указанного пользователя.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
       responses:
         '200':
           description: Список избранных предложений
@@ -510,8 +478,10 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/OfferListItem'
-        '401':
-          description: Клиент не авторизован
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Пользователь не найден
           content:
             application/json:
               schema:
@@ -524,12 +494,11 @@ paths:
       operationId: addOfferToFavorites
       summary: Добавление предложения в избранное
       description: |
-        Добавляет предложение в список избранных текущего пользователя.
-        Ресурс доступен только авторизованным клиентам.
-      security:
-        - bearerAuth: []
+        Добавляет предложение в список избранных указанного пользователя.
+      security: []
       parameters:
         - $ref: '#/components/parameters/OfferId'
+        - $ref: '#/components/parameters/UserId'
       responses:
         '201':
           description: Предложение добавлено в избранное
@@ -537,14 +506,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OfferListItem'
-        '401':
-          description: Клиент не авторизован
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HttpProblem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
-          description: Предложение не найдено
+          description: Предложение или пользователь не найдены
           content:
             application/json:
               schema:
@@ -555,23 +520,18 @@ paths:
       operationId: removeOfferFromFavorites
       summary: Удаление предложения из избранного
       description: |
-        Удаляет предложение из списка избранных текущего пользователя.
-        Ресурс доступен только авторизованным клиентам.
-      security:
-        - bearerAuth: []
+        Удаляет предложение из списка избранных указанного пользователя.
+      security: []
       parameters:
         - $ref: '#/components/parameters/OfferId'
+        - $ref: '#/components/parameters/UserId'
       responses:
         '204':
           description: Предложение удалено из избранного
-        '401':
-          description: Клиент не авторизован
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HttpProblem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
-          description: Предложение не найдено
+          description: Предложение или пользователь не найдены
           content:
             application/json:
               schema:
@@ -582,7 +542,6 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: JWT
 
   parameters:
     OfferId:
@@ -591,7 +550,14 @@ components:
       required: true
       description: Идентификатор предложения по аренде
       schema:
-        type: string
+        $ref: '#/components/schemas/ObjectId'
+    UserId:
+      name: userId
+      in: query
+      required: true
+      description: Идентификатор пользователя
+      schema:
+        $ref: '#/components/schemas/ObjectId'
     CityName:
       name: city
       in: path
@@ -600,7 +566,19 @@ components:
       schema:
         $ref: '#/components/schemas/CityName'
 
+  responses:
+    BadRequest:
+      description: Некорректный идентификатор или ошибка валидации запроса
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HttpProblem'
+
   schemas:
+    ObjectId:
+      type: string
+      pattern: '^[0-9a-fA-F]{24}$'
+
     CityName:
       type: string
       enum:
@@ -634,12 +612,15 @@ components:
       type: string
       description: Тип пользователя
       enum:
-        - обычный
+        - regular
         - pro
 
     Coordinates:
       type: object
       description: Координаты предложения — широта и долгота
+      required:
+        - latitude
+        - longitude
       properties:
         latitude:
           type: number
@@ -686,6 +667,9 @@ components:
           description: Пароль пользователя
         userType:
           $ref: '#/components/schemas/UserType'
+        avatarPath:
+          type: string
+          description: Необязательный путь к изображению .jpg или .png
 
     User:
       type: object
@@ -733,6 +717,8 @@ components:
           description: Логин (электронная почта) пользователя
         password:
           type: string
+          minLength: 6
+          maxLength: 12
           description: Пароль пользователя
 
     CreateOfferDto:
@@ -751,6 +737,7 @@ components:
         - price
         - amenities
         - coordinates
+        - authorId
       properties:
         title:
           type: string
@@ -804,6 +791,8 @@ components:
           minItems: 1
         coordinates:
           $ref: '#/components/schemas/Coordinates'
+        authorId:
+          $ref: '#/components/schemas/ObjectId'
 
     UpdateOfferDto:
       type: object
@@ -895,10 +884,13 @@ components:
           type: boolean
           description: Флаг «Избранное»
         rating:
-          type: number
-          minimum: 1
-          maximum: 5
-          description: Рейтинг предложения. Допускается один знак после запятой
+          description: 0, если оценок ещё нет. Иначе — рейтинг от 1 до 5 с одним знаком после запятой.
+          oneOf:
+            - type: number
+              enum: [0]
+            - type: number
+              minimum: 1
+              maximum: 5
         housingType:
           $ref: '#/components/schemas/HousingType'
         price:
@@ -960,6 +952,7 @@ components:
       required:
         - text
         - rating
+        - authorId
       properties:
         text:
           type: string
@@ -971,6 +964,8 @@ components:
           minimum: 1
           maximum: 5
           description: Рейтинг. Число от 1 до 5
+        authorId:
+          $ref: '#/components/schemas/ObjectId'
 
     Comment:
       type: object

@@ -1,5 +1,6 @@
 import { inject, injectable } from 'inversify';
 import { DocumentType, types } from '@typegoose/typegoose';
+import { ClientSession } from 'mongoose';
 import { UserService } from './user-service.interface.js';
 import { UserEntity } from './user.entity.js';
 import { CreateUserDto } from './dto/create-user.dto.js';
@@ -61,10 +62,15 @@ export class DefaultUserService implements UserService {
     return user;
   }
 
-  public async addFavoriteOffer(userId: string, offerId: string): Promise<DocumentType<UserEntity> | null> {
-    return this.userModel
-      .findByIdAndUpdate(userId, { $addToSet: { favoriteOffers: offerId } }, { new: true })
+  public async updateAvatar(id: string, avatarPath: string): Promise<DocumentType<UserEntity> | null> {
+    return this.userModel.findByIdAndUpdate(id, { avatarPath }, { new: true }).exec();
+  }
+
+  public async addFavoriteOffer(userId: string, offerId: string, session: ClientSession): Promise<boolean> {
+    const result = await this.userModel
+      .updateOne({ _id: userId }, { $addToSet: { favoriteOffers: offerId } }, { session })
       .exec();
+    return result.matchedCount === 1;
   }
 
   public async removeFavoriteOffer(userId: string, offerId: string): Promise<DocumentType<UserEntity> | null> {
@@ -73,9 +79,9 @@ export class DefaultUserService implements UserService {
       .exec();
   }
 
-  public async removeFavoriteOfferFromAllUsers(offerId: string): Promise<number> {
+  public async removeFavoriteOfferFromAllUsers(offerId: string, session: ClientSession): Promise<number> {
     const result = await this.userModel
-      .updateMany({ favoriteOffers: offerId }, { $pull: { favoriteOffers: offerId } })
+      .updateMany({ favoriteOffers: offerId }, { $pull: { favoriteOffers: offerId } }, { session })
       .exec();
 
     return result.modifiedCount;

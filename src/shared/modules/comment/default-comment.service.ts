@@ -15,13 +15,16 @@ export class DefaultCommentService implements CommentService {
     @inject(Component.OfferService) private readonly offerService: OfferService
   ) {}
 
-  public async create(dto: CreateCommentDto): Promise<DocumentType<CommentEntity>> {
-    const comment = await this.commentModel.create(dto);
+  public async create(dto: CreateCommentDto): Promise<DocumentType<CommentEntity> | null> {
+    return this.commentModel.db.transaction(async (session) => {
+      if (!await this.offerService.incCommentCount(dto.offerId, session)) {
+        return null;
+      }
 
-    await this.offerService.incCommentCount(dto.offerId);
-    await this.offerService.updateRating(dto.offerId);
-
-    return comment.populate('authorId');
+      const [comment] = await this.commentModel.create([dto], { session });
+      await this.offerService.updateRating(dto.offerId, session);
+      return comment.populate('authorId');
+    });
   }
 
   public async findByOfferId(offerId: string): Promise<DocumentType<CommentEntity>[]> {

@@ -1,6 +1,7 @@
 services:
   db:
     image: mongo:7
+    entrypoint: ["/bin/sh", "/usr/local/bin/six-cities-mongo-entrypoint.sh"]
     restart: always
     container_name: six-cities_mongodb
     environment:
@@ -10,6 +11,20 @@ services:
       - 27017:27017
     volumes:
       - six-cities_data:/data/db
+      - ./scripts/mongo-entrypoint.sh:/usr/local/bin/six-cities-mongo-entrypoint.sh:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet --host 127.0.0.1 --authenticationDatabase admin
+          --username "$$MONGO_INITDB_ROOT_USERNAME" --password "$$MONGO_INITDB_ROOT_PASSWORD"
+          --eval 'try { rs.status(); } catch (error) {
+            if (error.code !== 94) throw error;
+            rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]});
+          } if (!db.hello().isWritablePrimary) quit(1);'
+      interval: 2s
+      timeout: 5s
+      retries: 20
 
   db_ui:
     image: mongo-express:1
@@ -19,9 +34,10 @@ services:
       - 8081:8081
     environment:
       ME_CONFIG_BASICAUTH: false
-      ME_CONFIG_MONGODB_URL: mongodb://admin:test@db:27017/
+      ME_CONFIG_MONGODB_URL: mongodb://admin:test@db:27017/?authSource=admin&directConnection=true
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
 volumes:
   six-cities_data:

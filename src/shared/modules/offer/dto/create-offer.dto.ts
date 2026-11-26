@@ -1,40 +1,25 @@
 import { Expose } from 'class-transformer';
+import { IsMongoId } from 'class-validator';
 import { Amenity, City, HousingType, Location } from '../../../types/index.js';
+import { UpdateOfferDto } from './update-offer.dto.js';
 
-export class CreateOfferDto {
-  @Expose()
-  public title!: string;
+export class CreateOfferDto extends UpdateOfferDto {
+  declare public title: string;
+  declare public description: string;
+  declare public city: City;
+  declare public preview: string;
+  declare public photos: string[];
+  declare public isPremium: boolean;
+  declare public housingType: HousingType;
+  declare public rooms: number;
+  declare public guests: number;
+  declare public price: number;
+  declare public amenities: Amenity[];
+  declare public coordinates: Location;
+}
 
+export class CreateOfferRequestDto extends CreateOfferDto {
   @Expose()
-  public description!: string;
-
-  @Expose()
-  public city!: City;
-
-  @Expose()
-  public preview!: string;
-
-  @Expose()
-  public photos!: string[];
-
-  @Expose()
-  public isPremium!: boolean;
-
-  @Expose()
-  public housingType!: HousingType;
-
-  @Expose()
-  public rooms!: number;
-
-  @Expose()
-  public guests!: number;
-
-  @Expose()
-  public price!: number;
-
-  @Expose()
-  public amenities!: Amenity[];
-
-  @Expose()
-  public coordinates!: Location;
+  @IsMongoId()
+  public authorId!: string;
 }

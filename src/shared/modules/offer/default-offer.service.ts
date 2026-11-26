@@ -1,6 +1,6 @@
 import { inject, injectable } from 'inversify';
 import { DocumentType, types } from '@typegoose/typegoose';
-import { Types } from 'mongoose';
+import { ClientSession, Types } from 'mongoose';
 import { OfferService } from './offer-service.interface.js';
 import { OfferEntity } from './offer.entity.js';
 import { CreateOfferDto } from './dto/create-offer.dto.js';
@@ -97,12 +97,37 @@ export class DefaultOfferService implements OfferService {
   }
 
   public async deleteById(id: string): Promise<DocumentType<OfferEntity> | null> {
-    await Promise.all([
-      this.commentModel.deleteMany({ offerId: id }).exec(),
-      this.userService.removeFavoriteOfferFromAllUsers(id),
-    ]);
+    return this.offerModel.db.transaction(async (session) => {
+      const offer = await this.offerModel.findByIdAndDelete(id, { session }).exec();
+      if (!offer) {
+        return null;
+      }
 
-    return this.offerModel.findByIdAndDelete(id).exec();
+      await this.commentModel.deleteMany({ offerId: id }).session(session).exec();
+      await this.userService.removeFavoriteOfferFromAllUsers(id, session);
+      return offer;
+    });
+  }
+
+  public async addFavorite(
+    offerId: string,
+    userId: string,
+  ): Promise<DocumentType<OfferEntity> | 'offer-not-found' | 'user-not-found'> {
+    return this.offerModel.db.transaction(async (session) => {
+      const offer = await this.offerModel
+        .findByIdAndUpdate(offerId, { $inc: { __v: 1 } }, { session, timestamps: false })
+        .exec();
+      if (!offer) {
+        return 'offer-not-found';
+      }
+
+      if (!await this.userService.addFavoriteOffer(userId, offerId, session)) {
+        return 'user-not-found';
+      }
+
+      offer.isFavorite = true;
+      return offer;
+    });
   }
 
   public async findPremiumByCity(city: City, userId?: string): Promise<DocumentType<OfferEntity>[]> {
@@ -115,23 +140,20 @@ export class DefaultOfferService implements OfferService {
     return this.setFavoriteStatus(offers, userId);
   }
 
-  public async incCommentCount(id: string): Promise<DocumentType<OfferEntity> | null> {
-    return this.offerModel
-      .findByIdAndUpdate(id, { $inc: { commentCount: 1 } }, { new: true })
-      .exec();
+  public async incCommentCount(id: string, session: ClientSession): Promise<boolean> {
+    const result = await this.offerModel.updateOne({ _id: id }, { $inc: { commentCount: 1 } }, { session }).exec();
+    return result.matchedCount === 1;
   }
 
-  public async updateRating(id: string): Promise<DocumentType<OfferEntity> | null> {
+  public async updateRating(id: string, session: ClientSession): Promise<void> {
     const [ratingData] = await this.commentModel.aggregate<{ rating: number }>([
       { $match: { offerId: new Types.ObjectId(id) } },
       { $group: { _id: null, rating: { $avg: '$rating' } } },
-    ]);
+    ]).session(session).exec();
 
     const rating = ratingData ? Math.round(ratingData.rating * 10) / 10 : 0;
 
-    return this.offerModel
-      .findByIdAndUpdate(id, { rating }, { new: true })
-      .exec();
+    await this.offerModel.updateOne({ _id: id }, { rating }, { session }).exec();
   }
 
   private mapUpdateDto(dto: UpdateOfferDto): Record<string, unknown> {

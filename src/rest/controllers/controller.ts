@@ -25,6 +25,7 @@ export abstract class Controller implements ControllerInterface {
   public addRoute(route: Route): void {
     this._router[route.method](
       route.path,
+      ...(route.middleware ?? []).map((middleware) => asyncHandler(middleware.execute.bind(middleware))),
       asyncHandler(route.handler.bind(this)),
     );
 

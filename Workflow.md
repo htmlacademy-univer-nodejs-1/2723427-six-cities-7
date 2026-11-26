@@ -10,6 +10,22 @@ npm install
 
 Команда запустит процесс установки зависимостей проекта из **npm**.
 
+## Запуск MongoDB
+
+`docker compose up -d --wait db` запускает одноузловой replica set `rs0`.
+Транзакции предложений, комментариев и избранного требуют replica set:
+режим standalone не поддерживается для этих операций. При обновлении
+существующей установки Compose сохранит данные в текущем томе `six-cities_data`.
+Не запускайте `docker compose down -v`: этот флаг удаляет том с данными.
+
+Регрессионный тест транзакций подключается к replica set по `TEST_MONGO_URI`.
+Он создаёт и удаляет только свою отдельную тестовую базу:
+
+```bash
+TEST_MONGO_URI='mongodb://admin:test@127.0.0.1:27017/?authSource=admin' \
+  npx tsx --test src/shared/modules/offer/offer-transactions.test.ts
+```
+
 ### Сценарии
 
 В `package.json` предопределено несколько сценариев.
